@@ -20,28 +20,31 @@ socket.on('init', (data) => {
   players = data.players;
   collectibles = data.collectibles;
   currentPlayer = new Player(data.players[data.id]);
-  draw();
 });
 
 socket.on('new-player', (playerData) => {
   console.log('New player joined:', playerData.id);
   players[playerData.id] = playerData;
-  draw();
 });
 
 socket.on('player-update', (data) => {
   if (players[data.id]) {
-    players[data.id].x = data.x;
-    players[data.id].y = data.y;
+    // Store target position for smooth interpolation
+    players[data.id].targetX = data.x;
+    players[data.id].targetY = data.y;
     players[data.id].score = data.score;
-    draw();
+    
+    // If no current position, snap to target
+    if (players[data.id].x === undefined || players[data.id].y === undefined) {
+      players[data.id].x = data.x;
+      players[data.id].y = data.y;
+    }
   }
 });
 
 socket.on('player-disconnect', (playerId) => {
   console.log('Player disconnected:', playerId);
   delete players[playerId];
-  draw();
 });
 
 socket.on('collectible-update', (data) => {
@@ -60,66 +63,125 @@ socket.on('collectible-update', (data) => {
   if (data.player.id === socket.id && currentPlayer) {
     currentPlayer.score = data.player.score;
   }
-  
-  draw();
 });
 
 // Input handling
 const keys = {};
+let lastMovementTime = 0;
+const MOVEMENT_INTERVAL = 16; // ~60 FPS movement updates
 
 document.addEventListener('keydown', (e) => {
-  keys[e.key.toLowerCase()] = true;
-  handleMovement();
+  const key = e.key.toLowerCase();
+  if (!keys[key]) {
+    keys[key] = true;
+  }
 });
 
 document.addEventListener('keyup', (e) => {
   keys[e.key.toLowerCase()] = false;
 });
 
-function handleMovement() {
-  if (!currentPlayer) return;
+// Smooth movement system
+function updateMovement() {
+  if (!currentPlayer) {
+    requestAnimationFrame(updateMovement);
+    return;
+  }
   
-  const speed = 5;
+  const now = Date.now();
+  if (now - lastMovementTime < MOVEMENT_INTERVAL) {
+    requestAnimationFrame(updateMovement);
+    return;
+  }
+  
+  const speed = 4; // Slightly slower for smoother movement
+  let deltaX = 0;
+  let deltaY = 0;
   let moved = false;
   
+  // Check for diagonal movement combinations
   if (keys['w'] || keys['arrowup']) {
-    socket.emit('movement', { direction: 'up', speed: speed });
-    currentPlayer.movePlayer('up', speed);
+    deltaY -= speed;
     moved = true;
   }
   if (keys['s'] || keys['arrowdown']) {
-    socket.emit('movement', { direction: 'down', speed: speed });
-    currentPlayer.movePlayer('down', speed);
+    deltaY += speed;
     moved = true;
   }
   if (keys['a'] || keys['arrowleft']) {
-    socket.emit('movement', { direction: 'left', speed: speed });
-    currentPlayer.movePlayer('left', speed);
+    deltaX -= speed;
     moved = true;
   }
   if (keys['d'] || keys['arrowright']) {
-    socket.emit('movement', { direction: 'right', speed: speed });
-    currentPlayer.movePlayer('right', speed);
+    deltaX += speed;
     moved = true;
   }
   
   if (moved) {
-    // Apply boundary constraints on client side too
-    currentPlayer.x = Math.max(20, Math.min(620, currentPlayer.x));
-    currentPlayer.y = Math.max(20, Math.min(460, currentPlayer.y));
-    
-    // Update local player data
-    if (players[socket.id]) {
-      players[socket.id].x = currentPlayer.x;
-      players[socket.id].y = currentPlayer.y;
+    // Normalize diagonal movement to prevent faster diagonal movement
+    if (deltaX !== 0 && deltaY !== 0) {
+      const factor = Math.sqrt(2) / 2; // ~0.707
+      deltaX *= factor;
+      deltaY *= factor;
     }
     
-    draw();
+    // Update player position
+    const newX = currentPlayer.x + deltaX;
+    const newY = currentPlayer.y + deltaY;
+    
+    // Apply boundary constraints
+    const constrainedX = Math.max(20, Math.min(620, newX));
+    const constrainedY = Math.max(20, Math.min(460, newY));
+    
+    // Only update if position actually changed
+    if (constrainedX !== currentPlayer.x || constrainedY !== currentPlayer.y) {
+      currentPlayer.x = constrainedX;
+      currentPlayer.y = constrainedY;
+      
+      // Update local player data
+      if (players[socket.id]) {
+        players[socket.id].x = currentPlayer.x;
+        players[socket.id].y = currentPlayer.y;
+      }
+      
+      // Send movement to server
+      socket.emit('movement', { 
+        x: currentPlayer.x, 
+        y: currentPlayer.y,
+        deltaX: deltaX,
+        deltaY: deltaY
+      });
+      
+      lastMovementTime = now;
+    }
   }
+  
+  requestAnimationFrame(updateMovement);
 }
+
+// Start the movement loop
+updateMovement();
+
+// Continuous render loop for smooth animation
+function renderLoop() {
+  draw();
+  requestAnimationFrame(renderLoop);
+}
+
+// Start render loop
+renderLoop();
 
 // Drawing functions
 function draw() {
+  // Interpolate other players' positions for smooth movement
+  Object.values(players).forEach(player => {
+    if (player.id !== socket.id && player.targetX !== undefined && player.targetY !== undefined) {
+      const lerpFactor = 0.15; // Interpolation speed
+      player.x = player.x + (player.targetX - player.x) * lerpFactor;
+      player.y = player.y + (player.targetY - player.y) * lerpFactor;
+    }
+  });
+
   // Clear canvas
   context.fillStyle = '#220';
   context.fillRect(0, 0, canvas.width, canvas.height);
@@ -147,15 +209,15 @@ function draw() {
     
     // Draw player as circle
     context.beginPath();
-    context.arc(player.x, player.y, 15, 0, 2 * Math.PI);
+    context.arc(Math.round(player.x), Math.round(player.y), 15, 0, 2 * Math.PI);
     context.fill();
     
     // Draw player ID and score
     context.fillStyle = '#FFF';
     context.font = '10px Arial';
     context.textAlign = 'center';
-    context.fillText(`${player.id.substring(0, 6)}`, player.x, player.y - 20);
-    context.fillText(`Score: ${player.score}`, player.x, player.y + 30);
+    context.fillText(`${player.id.substring(0, 6)}`, Math.round(player.x), Math.round(player.y) - 20);
+    context.fillText(`Score: ${player.score}`, Math.round(player.x), Math.round(player.y) + 30);
   });
   
   // Draw current player's rank
@@ -174,9 +236,7 @@ function draw() {
   context.fillStyle = '#FFF';
   context.font = '12px Arial';
   context.textAlign = 'left';
-  context.fillText('Use WASD or Arrow Keys to move', 10, canvas.height - 40);
+  context.fillText('Use WASD or Arrow Keys to move (supports diagonal)', 10, canvas.height - 60);
+  context.fillText('Hold multiple keys for diagonal movement!', 10, canvas.height - 40);
   context.fillText('Collect gold items to increase your score!', 10, canvas.height - 20);
 }
-
-// Initial draw
-draw();

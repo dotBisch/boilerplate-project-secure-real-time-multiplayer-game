@@ -121,20 +121,27 @@ io.on('connection', (socket) => {
     if (players[socket.id]) {
       const player = players[socket.id];
       
-      // Update player position (with boundary checks)
-      switch (data.direction) {
-        case 'up':
-          player.y = Math.max(20, player.y - data.speed);
-          break;
-        case 'down':
-          player.y = Math.min(460, player.y + data.speed);
-          break;
-        case 'left':
-          player.x = Math.max(20, player.x - data.speed);
-          break;
-        case 'right':
-          player.x = Math.min(620, player.x + data.speed);
-          break;
+      // Update player position with smooth coordinates (with boundary checks)
+      if (data.x !== undefined && data.y !== undefined) {
+        player.x = Math.max(20, Math.min(620, data.x));
+        player.y = Math.max(20, Math.min(460, data.y));
+      } else {
+        // Fallback to old system if needed
+        const speed = data.speed || 4;
+        switch (data.direction) {
+          case 'up':
+            player.y = Math.max(20, player.y - speed);
+            break;
+          case 'down':
+            player.y = Math.min(460, player.y + speed);
+            break;
+          case 'left':
+            player.x = Math.max(20, player.x - speed);
+            break;
+          case 'right':
+            player.x = Math.min(620, player.x + speed);
+            break;
+        }
       }
 
       // Check for collectible collisions
@@ -164,7 +171,7 @@ io.on('connection', (socket) => {
         }
       }
 
-      // Broadcast player position update
+      // Broadcast player position update (throttled to prevent spam)
       socket.broadcast.emit('player-update', {
         id: socket.id,
         x: player.x,
