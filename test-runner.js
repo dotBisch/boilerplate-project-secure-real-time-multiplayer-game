@@ -36,17 +36,29 @@ var Mocha = require('mocha'),
 var mocha = new Mocha();
 var testDir = './tests'
 
+// Check if tests directory exists before trying to read it
+if (!fs.existsSync(testDir)) {
+    console.log('Tests directory not found. Skipping test setup.');
+    module.exports = { run: function() { console.log('No tests to run.'); } };
+    return;
+}
 
 // Add each .js file to the mocha instance
-fs.readdirSync(testDir).filter(function(file){
-    // Only keep the .js files
-    return file.substr(-3) === '.js';
+try {
+    fs.readdirSync(testDir).filter(function(file){
+        // Only keep the .js files
+        return file.substr(-3) === '.js';
 
-}).forEach(function(file){
-    mocha.addFile(
-        path.join(testDir, file)
-    );
-});
+    }).forEach(function(file){
+        mocha.addFile(
+            path.join(testDir, file)
+        );
+    });
+} catch (error) {
+    console.log('Error reading tests directory:', error.message);
+    module.exports = { run: function() { console.log('Failed to load tests.'); } };
+    return;
+}
 
 var emitter = new EventEmitter();  
 emitter.run = function() {

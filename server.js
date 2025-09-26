@@ -1,24 +1,42 @@
 require('dotenv').config();
 const express = require('express');
 const bodyParser = require('body-parser');
-const expect = require('chai');
-const socket = require('socket.io');
+const { expect } = require('chai');
+const { Server: SocketIO } = require('socket.io');
 const cors = require('cors');
 const helmet = require('helmet');
 
 const fccTestingRoutes = require('./routes/fcctesting.js');
-const runner = require('./test-runner.js');
+
+// Only require test-runner in development/test environments
+let runner = null;
+if (process.env.NODE_ENV === 'test') {
+  try {
+    runner = require('./test-runner.js');
+  } catch (error) {
+    console.log('Test runner not available:', error.message);
+  }
+}
 
 const app = express();
 
-// Configure Helmet for security headers
-app.use(helmet.noSniff()); // X-Content-Type-Options: nosniff
-app.use(helmet.xssFilter()); // X-XSS-Protection: 1; mode=block
-app.use(helmet.hidePoweredBy({ setTo: 'PHP 7.4.3' })); // Fake X-Powered-By header
+// Configure Helmet v7 for security headers
+app.use(helmet({
+  contentSecurityPolicy: false, // Disable CSP for Socket.IO compatibility
+  crossOriginEmbedderPolicy: false, // Allow Socket.IO connections
+  hsts: {
+    maxAge: 31536000,
+    includeSubDomains: true,
+    preload: true
+  }
+}));
 
-// Set cache control headers manually for helmet v3
+// Custom security headers for Railway compatibility
 app.use((req, res, next) => {
   res.set({
+    'X-Content-Type-Options': 'nosniff',
+    'X-XSS-Protection': '1; mode=block',
+    'X-Powered-By': 'PHP 7.4.3',
     'Surrogate-Control': 'no-store',
     'Cache-Control': 'no-store, no-cache, must-revalidate, proxy-revalidate',
     'Pragma': 'no-cache',
@@ -70,7 +88,7 @@ const server = app.listen(portNum, host, () => {
   console.log(`✅ Server successfully started!`);
   console.log(`🌐 Listening on ${host}:${portNum}`);
   console.log(`📝 Environment: ${process.env.NODE_ENV || 'development'}`);
-  if (process.env.NODE_ENV==='test') {
+  if (process.env.NODE_ENV==='test' && runner) {
     console.log('Running Tests...');
     setTimeout(function () {
       try {
@@ -105,13 +123,17 @@ const players = {};
 const collectibles = [];
 let nextCollectibleId = 1;
 
-// Socket.IO setup with Railway-compatible configuration
-const io = socket(server, {
+// Socket.IO v4 setup with Railway-compatible configuration
+const io = new SocketIO(server, {
   cors: {
     origin: "*",
-    methods: ["GET", "POST"]
+    methods: ["GET", "POST"],
+    credentials: false
   },
-  transports: ['websocket', 'polling']
+  transports: ['websocket', 'polling'],
+  allowEIO3: true, // Allow Socket.IO v3 clients for backward compatibility
+  pingTimeout: 60000,
+  pingInterval: 25000
 });
 
 // Create initial collectibles

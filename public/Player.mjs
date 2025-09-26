@@ -46,4 +46,8 @@ class Player {
   }
 }
 
+try {
+  module.exports = Player;
+} catch(e) {}
+
 export default Player;
