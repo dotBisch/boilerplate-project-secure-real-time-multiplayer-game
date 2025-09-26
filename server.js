@@ -36,6 +36,16 @@ app.use(bodyParser.urlencoded({ extended: true }));
 //For FCC testing purposes and enables user to connect from outside the hosting platform
 app.use(cors({origin: '*'})); 
 
+// Health check endpoint for Railway
+app.route('/health')
+  .get(function (req, res) {
+    res.status(200).json({ 
+      status: 'healthy', 
+      timestamp: new Date().toISOString(),
+      uptime: process.uptime()
+    });
+  });
+
 // Index page (static HTML)
 app.route('/')
   .get(function (req, res) {
@@ -53,10 +63,13 @@ app.use(function(req, res, next) {
 });
 
 const portNum = process.env.PORT || 3000;
+const host = process.env.HOST || '0.0.0.0';
 
 // Set up server and tests
-const server = app.listen(portNum, () => {
-  console.log(`Listening on port ${portNum}`);
+const server = app.listen(portNum, host, () => {
+  console.log(`✅ Server successfully started!`);
+  console.log(`🌐 Listening on ${host}:${portNum}`);
+  console.log(`📝 Environment: ${process.env.NODE_ENV || 'development'}`);
   if (process.env.NODE_ENV==='test') {
     console.log('Running Tests...');
     setTimeout(function () {
@@ -70,13 +83,36 @@ const server = app.listen(portNum, () => {
   }
 });
 
+// Handle server errors
+server.on('error', (error) => {
+  console.error('❌ Server error:', error);
+  if (error.code === 'EADDRINUSE') {
+    console.error(`Port ${portNum} is already in use`);
+  }
+});
+
+// Graceful shutdown
+process.on('SIGTERM', () => {
+  console.log('🔄 SIGTERM received, shutting down gracefully');
+  server.close(() => {
+    console.log('✅ Server closed');
+    process.exit(0);
+  });
+});
+
 // Game state
 const players = {};
 const collectibles = [];
 let nextCollectibleId = 1;
 
-// Socket.IO setup
-const io = socket(server);
+// Socket.IO setup with Railway-compatible configuration
+const io = socket(server, {
+  cors: {
+    origin: "*",
+    methods: ["GET", "POST"]
+  },
+  transports: ['websocket', 'polling']
+});
 
 // Create initial collectibles
 function createCollectible() {
